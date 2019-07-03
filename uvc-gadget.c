@@ -36,6 +36,8 @@
 #include <linux/usb/g_uvc.h>
 #include <linux/usb/video.h>
 #include <linux/videodev2.h>
+#include "uvc-gadget.h"
+#include "thread_bind_core.h"
 
 #define UVC_INTF_CONTROL	0
 #define UVC_INTF_STREAMING	1
@@ -857,61 +859,19 @@ static void uvc_stream_load_yuvimg(struct uvc_device *dev, const char *img)
 	close(fd);
 }
 
-static void usage(const char *argv0)
-{
-	fprintf(stderr, "Usage: %s [options]\n", argv0);
-	fprintf(stderr, "Available options are\n");
-	fprintf(stderr, " -b		Use bulk mode\n");
-	fprintf(stderr, " -d device	Video device\n");
-	fprintf(stderr, " -h		Print this help screen and exit\n");
-	fprintf(stderr, " -i image	MJPEG image\n");
-	fprintf(stderr, " -y image	YUYV image\n");
-	fprintf(stderr, " -g directory JPEG directory\n");
-}
-
-int main(int argc, char *argv[])
+int uvc_gadget_main(void *arg)
 {
 	char *device = "/dev/video0";
 	struct uvc_device *dev;
 	int bulk_mode = 0;
 	char *mjpeg_image = NULL;
 	char *yuv_image   = NULL;
-	char *jpg_directory = NULL;
+	char *jpg_directory = "/home/pi/work/video-640x480";
 	fd_set fds;
-	int ret, opt;
+	int ret;
+	int *thread_id = (int *)arg; 
 
-	while ((opt = getopt(argc, argv, "bd:hi:y:g:")) != -1) {
-		switch (opt) {
-		case 'b':
-			bulk_mode = 1;
-			break;
-
-		case 'd':
-			device = optarg;
-			break;
-
-		case 'h':
-			usage(argv[0]);
-			return 0;
-
-		case 'i':
-			mjpeg_image = optarg;
-			break;
-
-		case 'y':
-			yuv_image  = optarg;
-			break;
-
-		case 'g':
-			jpg_directory  = optarg;
-			break;
-
-		default:
-			fprintf(stderr, "Invalid option '-%c'\n", opt);
-			usage(argv[0]);
-			return 1;
-		}
-	}
+	thread_bind_core(*thread_id);
 
 	dev = uvc_open(device);
 	if (dev == NULL)

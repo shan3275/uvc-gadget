@@ -4,15 +4,28 @@ KERNEL_DIR	?= /usr
 
 CC		:= $(CROSS_COMPILE)gcc
 KERNEL_INCLUDE	:= -I$(KERNEL_DIR)/include -I$(KERNEL_DIR)/arch/$(ARCH)/include
-CFLAGS		:= -W -Wall -g $(KERNEL_INCLUDE)
-LDFLAGS		:= -g
+CFLAGS += -Wall -g $(KERNEL_INCLUDE) -I /usr/local/include
+ECFLAGS = -Wall -g $(KERNEL_INCLUDE) -I /usr/local/include
+LDFLAGS		+= -g
+ELDFLAGS += -L/usr/local/lib
+LDLIBS =  -lavformat -lavcodec -lswscale -lswresample -lavutil -lavfilter -lavdevice
+LDLIBS +=  -lm -pthread
 
-all: uvc-gadget
+PROG    = uvc
 
-uvc-gadget: events.o uvc-gadget.o
-	$(CC) $(LDFLAGS) -o $@ $^
+SOURCES = $(wildcard *.c)
+OBJS   ?= $(patsubst %.c,%.o,$(SOURCES))
+MOD    ?= $(PROG)
+
+all: $(PROG)
+
+%.o: %.c
+	$(CC) $(CFLAGS) $(ECFLAGS) -c $< -o $@
+
+
+$(PROG): $(OBJS)
+	$(CC) $^ -o $@ $(LDFLAGS) $(ELDFLAGS) $(LDLIBS)
 
 clean:
-	rm -f *.o
-	rm -f uvc-gadget
-
+	rm -rf *.o
+	rm -rf $(PROG)
