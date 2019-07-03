@@ -84,6 +84,9 @@ struct uvc_device
 	void *imgdata;
 
 	YUV_IMAGE *yuvimg;
+	unsigned char *jpg_directory;  /* jpg directory*/
+	unsigned int  jpg_counter;	   /* jpg counter */
+	unsigned int  yuv_counter;	   /* yuv counter */
 };
 
 static struct uvc_device *
@@ -140,6 +143,70 @@ uvc_close(struct uvc_device *dev)
 	free(dev);
 }
 
+static int
+uvc_video_fill_img(struct uvc_device *dev, struct v4l2_buffer *buf)
+{
+	int fd = -1;
+	unsigned int imgsize = 0;
+	char img_name[128]={0};
+
+	sprintf(img_name, "%s/aa%04d.jpg", dev->jpg_directory, ++dev->jpg_counter);
+	//printf("img_name: %s\n", img_name);
+
+	if (access(img_name, F_OK) < 0)
+	{
+		printf("access error for %s\n", img_name);
+		dev->jpg_counter = 0;
+		sprintf(img_name, "%s/aa%04d.jpg", dev->jpg_directory, ++dev->jpg_counter);
+		printf("img_name: %s\n", img_name);		
+	}
+
+	fd = open(img_name, O_RDONLY);
+	if (fd == -1) {
+		printf("Unable to open MJPEG image '%s'\n", img_name);
+		return -1;
+	}
+
+	imgsize = lseek(fd, 0, SEEK_END);
+	lseek(fd, 0, SEEK_SET);
+	read(fd, dev->mem[buf->index], imgsize);
+	buf->bytesused = imgsize;
+	close(fd);
+	usleep(35000);
+	return 0;
+}
+
+static int
+uvc_video_fill_yuv(struct uvc_device *dev, struct v4l2_buffer *buf)
+{
+	int fd = -1;
+	unsigned int imgsize = 0;
+	char img_name[128]={0};
+
+	sprintf(img_name, "%s/aa%04d.yuv", dev->jpg_directory, ++dev->yuv_counter);
+	printf("img_name: %s\n", img_name);
+
+	if (access(img_name, F_OK) < 0)
+	{
+		printf("access error for %s\n", img_name);
+		dev->yuv_counter = 0;
+		sprintf(img_name, "%s/aa%04d.jpg", dev->jpg_directory, ++dev->yuv_counter);
+		printf("img_name: %s\n", img_name);		
+	}
+
+	fd = open(img_name, O_RDONLY);
+	if (fd == -1) {
+		printf("Unable to open YUV image '%s'\n", img_name);
+		return -1;
+	}
+
+	imgsize = lseek(fd, 0, SEEK_END);
+	lseek(fd, 0, SEEK_SET);
+	read(fd, dev->mem[buf->index], imgsize);
+	buf->bytesused = imgsize;
+	close(fd);
+	return 0;
+}
 /* ---------------------------------------------------------------------------
  * Video streaming
  */
@@ -150,6 +217,18 @@ uvc_video_fill_buffer(struct uvc_device *dev, struct v4l2_buffer *buf)
 	switch (dev->fcc) {
 	case V4L2_PIX_FMT_YUYV:
 		/* Fill the buffer with video data. */
+		if (uvc_video_fill_yuv(dev,buf) < 0)
+		{
+			unsigned int bpl;
+			bpl = dev->width * 2;
+			unsigned int i;
+			for (i = 0; i < dev->height; ++i)
+			{
+				memset(dev->mem[buf->index] + i*bpl, dev->color++, bpl);
+			}
+			buf->bytesused = bpl * dev->height;
+		}
+		/*
 		if (dev->yuvimg->y == NULL)
 		{
 			unsigned int bpl;
@@ -166,12 +245,25 @@ uvc_video_fill_buffer(struct uvc_device *dev, struct v4l2_buffer *buf)
 			memcpy(dev->mem[buf->index], dev->yuvimg->y, dev->width*dev->height*2);
 			buf->bytesused = dev->width*dev->height*2;
 		}
+		*/
 
 		break;
 
 	case V4L2_PIX_FMT_MJPEG:
-		memcpy(dev->mem[buf->index], dev->imgdata, dev->imgsize);
-		buf->bytesused = dev->imgsize;
+		if (dev->jpg_directory == NULL)
+		{
+			memcpy(dev->mem[buf->index], dev->imgdata, dev->imgsize);
+			buf->bytesused = dev->imgsize;			
+		}
+		else
+		{
+			if (uvc_video_fill_img(dev, buf) < 0)
+			{
+				memcpy(dev->mem[buf->index], dev->imgdata, dev->imgsize);
+				buf->bytesused = dev->imgsize;	
+			}
+		}
+
 		break;
 	}
 }
@@ -347,13 +439,13 @@ struct uvc_format_info
 };
 
 static const struct uvc_frame_info uvc_frames_yuyv[] = {
-	{  640, 360, { 666666, 10000000, 50000000, 0 }, },
+	{  640, 480, { 333333, 666666, 10000000, 50000000, 0 }, },
 	{ 1280, 720, { 50000000, 0 }, },
 	{ 0, 0, { 0, }, },
 };
 
 static const struct uvc_frame_info uvc_frames_mjpeg[] = {
-	{  640, 360, { 666666, 10000000, 50000000, 0 }, },
+	{  640, 360, { 333333, 666666, 10000000, 50000000, 0 }, },
 	{ 1280, 720, { 50000000, 0 }, },
 	{ 0, 0, { 0, }, },
 };
@@ -625,7 +717,7 @@ uvc_events_process(struct uvc_device *dev)
 		return;
 
 	case UVC_EVENT_STREAMON:
-		uvc_video_reqbufs(dev, 4);
+		uvc_video_reqbufs(dev, 8);
 		uvc_video_stream(dev, 1);
 		return;
 
@@ -699,6 +791,42 @@ static void image_load(struct uvc_device *dev, const char *img)
 	close(fd);
 }
 
+static void image_directory_load(struct uvc_device *dev, const char *img_directory)
+{
+	struct stat buf;
+    mode_t mode;
+	int fd = -1;
+
+	if (img_directory == NULL)
+		return;
+
+	fd = open(img_directory, O_RDONLY);
+	if (fd == -1) {
+		printf("Unable to open JPEG directory '%s'\n", img_directory);
+		return;
+	}
+
+	/* get file stats*/
+    if ((fstat(fd, &buf)) < 0) {
+        perror("fstat");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    mode = buf.st_mode;
+    if (!S_ISDIR(mode))
+    {
+    	printf("parameter error, not directory\n");
+    	close(fd);
+    	exit(EXIT_FAILURE);
+    }
+    dev->jpg_directory = malloc(strlen(img_directory)+1);
+    memset(dev->jpg_directory, 0, strlen(img_directory)+1);
+    memcpy(dev->jpg_directory,img_directory, strlen(img_directory));
+    printf("dev->jpg_directory: %s\n", dev->jpg_directory);
+	close(fd);
+}
+
 static void uvc_stream_load_yuvimg(struct uvc_device *dev, const char *img)
 {
 	int fd = -1;
@@ -715,7 +843,7 @@ static void uvc_stream_load_yuvimg(struct uvc_device *dev, const char *img)
 		return;
 	}
 
-	yuvImage->height = 360;
+	yuvImage->height = 480;
 	yuvImage->width  = 640;
 	unsigned int size = yuvImage->height * yuvImage->width;
 	yuvImage->y= (unsigned char*)malloc((size * 2)*sizeof(unsigned char));
@@ -738,6 +866,7 @@ static void usage(const char *argv0)
 	fprintf(stderr, " -h		Print this help screen and exit\n");
 	fprintf(stderr, " -i image	MJPEG image\n");
 	fprintf(stderr, " -y image	YUYV image\n");
+	fprintf(stderr, " -g directory JPEG directory\n");
 }
 
 int main(int argc, char *argv[])
@@ -747,10 +876,11 @@ int main(int argc, char *argv[])
 	int bulk_mode = 0;
 	char *mjpeg_image = NULL;
 	char *yuv_image   = NULL;
+	char *jpg_directory = NULL;
 	fd_set fds;
 	int ret, opt;
 
-	while ((opt = getopt(argc, argv, "bd:hi:y:")) != -1) {
+	while ((opt = getopt(argc, argv, "bd:hi:y:g:")) != -1) {
 		switch (opt) {
 		case 'b':
 			bulk_mode = 1;
@@ -772,6 +902,10 @@ int main(int argc, char *argv[])
 			yuv_image  = optarg;
 			break;
 
+		case 'g':
+			jpg_directory  = optarg;
+			break;
+
 		default:
 			fprintf(stderr, "Invalid option '-%c'\n", opt);
 			usage(argv[0]);
@@ -785,6 +919,7 @@ int main(int argc, char *argv[])
 
 	image_load(dev, mjpeg_image);
 	uvc_stream_load_yuvimg(dev, yuv_image);
+	image_directory_load(dev, jpg_directory);
 
 	dev->bulk = bulk_mode;
 
