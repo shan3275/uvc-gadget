@@ -12,11 +12,12 @@
 
 #include "uvc-gadget.h"
 #include "uvc-video.h"
+#include "mq_ring.h"
 
 #define THREAD_MAX_NUM 2 //1个CPU内的最多进程数
+ring_t* msgr = NULL;
 
-
-int main(int argc, char *argv[])
+static int thread_init(void)
 {
 	int tid[THREAD_MAX_NUM];
     int i;
@@ -48,3 +49,44 @@ int main(int argc, char *argv[])
     }
     return 0;
 }
+
+static int ring_init(uint32_t size)
+{
+	uint32_t i;
+	mq_pic_t *pic = NULL;
+	printf("initialize ring begin\n");
+	msgr = initialize_ring(size);
+	if (!msgr)
+	{
+		printf("init ring fail! exit\n");
+		return -1;
+	}
+	for (i = 0; i < size; i++)
+	{
+		pic = calloc(1,sizeof(mq_pic_t));
+		if (pic)
+		{
+			msgr->idx_buff[i] = (uint64_t *)pic;
+		}
+		else
+		{
+			printf("calloc mq_pic_t fail, when i = %d\n", i);
+			return -1;
+		}
+	}
+	printf("initialize ring success!\n");
+	return 0;
+}
+
+int main(int argc, char *argv[])
+{	int rv;
+	rv = ring_init(MQ_PIC_RING_SIZE);
+	if (rv)
+	{
+		printf("initialize fail! exit\n");
+		return 0;
+	}
+	thread_init();
+	return 0;
+}
+

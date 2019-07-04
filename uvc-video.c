@@ -36,6 +36,7 @@
 #include <libswscale/swscale.h>
 
 #include "thread_bind_core.h"
+#include "mq_ring.h"
 
 
 static AVFormatContext *fmt_ctx = NULL;
@@ -44,8 +45,6 @@ static int width, height;
 static enum AVPixelFormat pix_fmt;
 static AVStream *video_stream = NULL;
 static const char *src_filename = NULL;
-static const char *video_dst_filename = NULL;
-static FILE *video_dst_file = NULL;
 
 static uint8_t *video_dst_data[4] = {NULL};
 static int      video_dst_linesize[4];
@@ -61,11 +60,44 @@ static int jpg_counter       = 0;
 static struct SwsContext *swsContext = NULL;
 static AVFrame *dstframe = NULL; /* AV_PIX_FMT_YUYV422 */
 
+extern ring_t* msgr;
+
 /* Enable or disable frame reference counting. You are not supposed to support
  * both paths in your application but pick the one most appropriate to your
  * needs. Look for the use of refcount in this example to see what are the
  * differences of API usage between them. */
 static int refcount = 0;
+
+static void save_yuv_pic_to_file(uint8_t *data, uint32_t size)
+{
+    FILE *img_dst_file = NULL;
+    char img_name[128]={0};
+    sprintf(img_name, "/home/pi/work/video-test/aa%04d.yuv",  ++jpg_counter);
+    printf("write img_name: %s\n", img_name);
+
+    img_dst_file = fopen(img_name, "wb");
+    if (!img_dst_file) 
+    {
+        fprintf(stderr, "Could not open destination file %s\n", img_name);
+    }
+    else
+    {
+        fwrite(data, 1, size, img_dst_file);
+        fclose(img_dst_file);
+    }
+}
+
+static void save_yuv_pic_to_ring(uint8_t *data, uint32_t size)
+{
+    while (enring(msgr, data, size) == false)
+    {
+        printf("save_yuv_pic_to_ring fail sleep\n");
+        usleep(2000000);
+    }
+    printf("ring->in:%d, ring->out:%d, ring->size:%d\n", msgr->in, msgr->out, msgr->size);
+    printf("save_yuv_pic_to_ring succeeded , %d\n", ++jpg_counter);
+
+}
 
 static int decode_packet(int *got_frame, int cached)
 {
@@ -99,13 +131,14 @@ static int decode_packet(int *got_frame, int cached)
                         av_get_pix_fmt_name(frame->format));
                 return -1;
             }
-
+            #if 0
             printf("pixel format of the input video changed:\n"
                         "old: width = %d, height = %d, format = %s\n"
                         "new: width = %d, height = %d, format = %s\n",
                         width, height, av_get_pix_fmt_name(pix_fmt),
                         frame->width, frame->height,
                         av_get_pix_fmt_name(frame->format));
+            #endif
 
             printf("srcframe linesize:%d, %d, %d, %d\n", frame->linesize[0],frame->linesize[1],
                 frame->linesize[2],frame->linesize[3]);
@@ -126,14 +159,14 @@ static int decode_packet(int *got_frame, int cached)
             dstframe->format = AV_PIX_FMT_YUYV422; /* choose same format set on sws_getContext() */
             dstframe->width  = width; /* must match sizes as on sws_getContext() */
             dstframe->height = height; /* must match sizes as on sws_getContext() */
-            #if 1
+            
             int ret = av_frame_get_buffer(dstframe, 32);
             if (ret < 0)
             {
                 fprintf(stderr, "Error: could not allocate the video frame data\n");
                 return -1;
             }
-            #endif
+            
 
             /* do the conversion */
             ret = sws_scale(swsContext,          /* SwsContext* on step (1) */
@@ -158,23 +191,11 @@ static int decode_packet(int *got_frame, int cached)
             av_image_copy(video_dst_data, video_dst_linesize,
                           (const uint8_t **)(dstframe->data), dstframe->linesize,
                           dstframe->format, width, height);
-
-             FILE *img_dst_file = NULL;
-            char img_name[128]={0};
-            sprintf(img_name, "/home/pi/work/video-test/aa%04d.yuv",  ++jpg_counter);
-            printf("img_name: %s\n", img_name);
-
-            img_dst_file = fopen(img_name, "wb");
-            if (!img_dst_file) 
-            {
-                fprintf(stderr, "Could not open destination file %s\n", img_name);
-            }
-            else
-            {   
-                fwrite(video_dst_data[0], 1, width*height*2, img_dst_file);
-                fclose(img_dst_file);
-            }
-
+            #if 0
+            save_yuv_pic_to_file(video_dst_data[0], width*height*2);
+            #else
+            save_yuv_pic_to_ring(video_dst_data[0], width*height*2);
+            #endif
             av_frame_unref(dstframe);
         }
     } 
@@ -251,8 +272,10 @@ int uvc_video_main(void *arg)
 
     thread_bind_core(*thread_id);
 
-    src_filename = "/home/pi/work/video-640x480/cc.mp4";
-    video_dst_filename = "/home/pi/work/video-test/aa.mp4";
+    //src_filename = "/home/pi/work/uvc-gadget/test-640x480.mp4";
+    src_filename = "/home/pi/work/uvc-gadget/test-320x240.mp4";
+
+
 
     /* open input file, and allocate format context */
     if (avformat_open_input(&fmt_ctx, src_filename, NULL, NULL) < 0) {
@@ -269,12 +292,6 @@ int uvc_video_main(void *arg)
     if (open_codec_context(&video_stream_idx, &video_dec_ctx, fmt_ctx, AVMEDIA_TYPE_VIDEO) >= 0) {
         video_stream = fmt_ctx->streams[video_stream_idx];
 
-        video_dst_file = fopen(video_dst_filename, "wb");
-        if (!video_dst_file) {
-            fprintf(stderr, "Could not open destination file %s\n", video_dst_filename);
-            ret = 1;
-            goto end;
-        }
 
         /* allocate image where the decoded image will be put */
         width = video_dec_ctx->width;
@@ -321,7 +338,7 @@ int uvc_video_main(void *arg)
     pkt.size = 0;
 
     if (video_stream)
-        printf("Demuxing video from file '%s' into '%s'\n", src_filename, video_dst_filename);
+        printf("Demuxing video from file '%s'\n", src_filename);
 
     /* read frames from the file */
     while (av_read_frame(fmt_ctx, &pkt) >= 0) {
@@ -350,19 +367,9 @@ int uvc_video_main(void *arg)
 
     printf("Demuxing succeeded.\n");
 
-    if (video_stream) {
-        printf("Play the output video file with the command:\n"
-               "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
-               av_get_pix_fmt_name(pix_fmt), width, height,
-               video_dst_filename);
-    }
-
-
 end:
     avcodec_free_context(&video_dec_ctx);
     avformat_close_input(&fmt_ctx);
-    if (video_dst_file)
-        fclose(video_dst_file);
     av_frame_free(&frame);
     av_free(video_dst_data[0]);
 

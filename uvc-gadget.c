@@ -38,6 +38,9 @@
 #include <linux/videodev2.h>
 #include "uvc-gadget.h"
 #include "thread_bind_core.h"
+#include "mq_ring.h"
+
+extern ring_t* msgr;
 
 #define UVC_INTF_CONTROL	0
 #define UVC_INTF_STREAMING	1
@@ -82,9 +85,16 @@ struct uvc_device
 
 	unsigned int bulk;
 	uint8_t color;
+
+	/* save ring temp buff data */
+	unsigned int yuvsize;
+	void *yuvdata;
+
+	/* save jpg file data*/
 	unsigned int imgsize;
 	void *imgdata;
 
+	/* save yuv file data*/
 	YUV_IMAGE *yuvimg;
 	unsigned char *jpg_directory;  /* jpg directory*/
 	unsigned int  jpg_counter;	   /* jpg counter */
@@ -132,6 +142,13 @@ uvc_open(const char *devname)
 		return NULL;
 	}
 	memset(dev->yuvimg, 0, sizeof(YUV_IMAGE));
+
+	/* for ring buffer temp use */
+	dev->yuvdata = malloc(640*480*2+4);
+	if (dev->yuvdata == NULL) {
+		free(dev);
+		return NULL;
+	}
 
 	return dev;
 }
@@ -186,7 +203,7 @@ uvc_video_fill_yuv(struct uvc_device *dev, struct v4l2_buffer *buf)
 	char img_name[128]={0};
 
 	sprintf(img_name, "%s/aa%04d.yuv", dev->jpg_directory, ++dev->yuv_counter);
-	printf("img_name: %s\n", img_name);
+	printf("read img_name: %s\n", img_name);
 
 	if (access(img_name, F_OK) < 0)
 	{
@@ -209,6 +226,21 @@ uvc_video_fill_yuv(struct uvc_device *dev, struct v4l2_buffer *buf)
 	close(fd);
 	return 0;
 }
+
+static int
+uvc_video_fill_yuv_from_ring(struct uvc_device *dev, struct v4l2_buffer *buf)
+{
+	if ( !dering(msgr, dev->yuvdata, &dev->yuvsize) )
+	{
+		printf("dering failed\n");
+		return -1;
+	}
+	
+	memcpy(dev->mem[buf->index],dev->yuvdata, dev->yuvsize);
+	buf->bytesused = dev->yuvsize;
+
+	return 0;
+}
 /* ---------------------------------------------------------------------------
  * Video streaming
  */
@@ -219,7 +251,8 @@ uvc_video_fill_buffer(struct uvc_device *dev, struct v4l2_buffer *buf)
 	switch (dev->fcc) {
 	case V4L2_PIX_FMT_YUYV:
 		/* Fill the buffer with video data. */
-		if (uvc_video_fill_yuv(dev,buf) < 0)
+		if (uvc_video_fill_yuv_from_ring(dev,buf) < 0)
+		//if (uvc_video_fill_yuv(dev,buf) < 0)
 		{
 			unsigned int bpl;
 			bpl = dev->width * 2;
@@ -442,7 +475,7 @@ struct uvc_format_info
 
 static const struct uvc_frame_info uvc_frames_yuyv[] = {
 	{  640, 480, { 333333, 666666, 10000000, 50000000, 0 }, },
-	{ 1280, 720, { 50000000, 0 }, },
+	{  320, 240, { 333333, 666666, 10000000, 50000000, 0 }, },
 	{ 0, 0, { 0, }, },
 };
 
@@ -865,8 +898,8 @@ int uvc_gadget_main(void *arg)
 	struct uvc_device *dev;
 	int bulk_mode = 0;
 	char *mjpeg_image = NULL;
-	char *yuv_image   = NULL;
-	char *jpg_directory = "/home/pi/work/video-640x480";
+	char *yuv_image   = "/home/pi/work/uvc-gadget/640x480.yuv";
+	char *jpg_directory = "/home/pi/work/video-test";
 	fd_set fds;
 	int ret;
 	int *thread_id = (int *)arg; 
