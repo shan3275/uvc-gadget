@@ -60,7 +60,7 @@ static int jpg_counter       = 0;
 static struct SwsContext *swsContext = NULL;
 static AVFrame *dstframe = NULL; /* AV_PIX_FMT_YUYV422 */
 
-extern ring_t* msgr;
+extern ring_t* yuv_msgr;
 
 /* Enable or disable frame reference counting. You are not supposed to support
  * both paths in your application but pick the one most appropriate to your
@@ -89,12 +89,12 @@ static void save_yuv_pic_to_file(uint8_t *data, uint32_t size)
 
 static void save_yuv_pic_to_ring(uint8_t *data, uint32_t size)
 {
-    while (enring(msgr, data, size) == false)
+    while (enring(yuv_msgr, data, size) == false)
     {
         printf("save_yuv_pic_to_ring fail sleep\n");
         usleep(2000000);
     }
-    printf("ring->in:%d, ring->out:%d, ring->size:%d\n", msgr->in, msgr->out, msgr->size);
+    printf("ring->in:%d, ring->out:%d, ring->size:%d\n", yuv_msgr->in, yuv_msgr->out, yuv_msgr->size);
     printf("save_yuv_pic_to_ring succeeded , %d\n", ++jpg_counter);
 
 }
@@ -264,7 +264,7 @@ static int open_codec_context(int *stream_idx,
     return 0;
 }
 
-int uvc_video_main(void *arg)
+int uvc_yuv_main(void *arg)
 {
     int ret = 0, got_frame;
 
@@ -272,8 +272,8 @@ int uvc_video_main(void *arg)
 
     thread_bind_core(*thread_id);
 
-    //src_filename = "/home/pi/work/uvc-gadget/test-640x480.mp4";
-    src_filename = "/home/pi/work/uvc-gadget/test-320x240.mp4";
+    src_filename = "/home/pi/work/uvc-gadget/test-640x480.mp4";
+    //src_filename = "/home/pi/work/uvc-gadget/test-320x240.mp4";
 
 
 

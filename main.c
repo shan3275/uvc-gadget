@@ -11,11 +11,13 @@
 #include <pthread.h>
 
 #include "uvc-gadget.h"
-#include "uvc-video.h"
+#include "uvc-yuv.h"
+#include "uvc-jpg.h"
 #include "mq_ring.h"
 
-#define THREAD_MAX_NUM 2 //1个CPU内的最多进程数
-ring_t* msgr = NULL;
+#define THREAD_MAX_NUM 3 //1个CPU内的最多进程数
+ring_t* yuv_msgr = NULL;
+ring_t* jpg_msgr = NULL;
 
 static int thread_init(void)
 {
@@ -36,11 +38,16 @@ static int thread_init(void)
         tid[i] = i;  //每个线程必须有个tid[i]
         if (i == 0)
         {
-        	pthread_create(&thread[i],NULL,uvc_gadget_main,(void*)&tid[i]);
+        	pthread_create(&thread[i], NULL, uvc_gadget_main, (void*)&tid[i]);
+        }
+        else
+        if (i == 1)
+        {
+        	pthread_create(&thread[i], NULL, uvc_yuv_main,    (void*)&tid[i]);
         }
         else
         {
-        	pthread_create(&thread[i],NULL,uvc_video_main,(void*)&tid[i]);
+        	pthread_create(&thread[i], NULL, uvc_jpg_main,    (void*)&tid[i]);
         }
     }
     for(i=0; i< THREAD_MAX_NUM; i++)
@@ -50,16 +57,17 @@ static int thread_init(void)
     return 0;
 }
 
-static int ring_init(uint32_t size)
+static ring_t  * ring_init(uint32_t size)
 {
 	uint32_t i;
+	ring_t  *msgr = NULL;
 	mq_pic_t *pic = NULL;
 	printf("initialize ring begin\n");
 	msgr = initialize_ring(size);
 	if (!msgr)
 	{
 		printf("init ring fail! exit\n");
-		return -1;
+		return NULL;
 	}
 	for (i = 0; i < size; i++)
 	{
@@ -71,19 +79,25 @@ static int ring_init(uint32_t size)
 		else
 		{
 			printf("calloc mq_pic_t fail, when i = %d\n", i);
-			return -1;
+			return NULL;
 		}
 	}
 	printf("initialize ring success!\n");
-	return 0;
+	return msgr;
 }
 
 int main(int argc, char *argv[])
 {	int rv;
-	rv = ring_init(MQ_PIC_RING_SIZE);
-	if (rv)
+	yuv_msgr = ring_init(MQ_PIC_RING_SIZE);
+	if (!yuv_msgr)
 	{
-		printf("initialize fail! exit\n");
+		printf("initialize yuv fail! exit\n");
+		return 0;
+	}
+	jpg_msgr = ring_init(MQ_PIC_RING_SIZE);
+	if (!yuv_msgr)
+	{
+		printf("initialize jpg fail! exit\n");
 		return 0;
 	}
 	thread_init();

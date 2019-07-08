@@ -40,7 +40,9 @@
 #include "thread_bind_core.h"
 #include "mq_ring.h"
 
-extern ring_t* msgr;
+extern ring_t* yuv_msgr;
+extern ring_t* jpg_msgr;
+
 
 #define UVC_INTF_CONTROL	0
 #define UVC_INTF_STREAMING	1
@@ -55,7 +57,6 @@ extern ring_t* msgr;
         __val > __max ? __max: __val; })
 
 #define ARRAY_SIZE(a)	((sizeof(a) / sizeof(a[0])))
-
 
 typedef struct yuvImage
 {
@@ -170,7 +171,7 @@ uvc_video_fill_img(struct uvc_device *dev, struct v4l2_buffer *buf)
 	char img_name[128]={0};
 
 	sprintf(img_name, "%s/aa%04d.jpg", dev->jpg_directory, ++dev->jpg_counter);
-	//printf("img_name: %s\n", img_name);
+	printf("jpg img_name: %s\n", img_name);
 
 	if (access(img_name, F_OK) < 0)
 	{
@@ -230,7 +231,7 @@ uvc_video_fill_yuv(struct uvc_device *dev, struct v4l2_buffer *buf)
 static int
 uvc_video_fill_yuv_from_ring(struct uvc_device *dev, struct v4l2_buffer *buf)
 {
-	if ( !dering(msgr, dev->yuvdata, &dev->yuvsize) )
+	if ( !dering(yuv_msgr, dev->yuvdata, &dev->yuvsize) )
 	{
 		printf("dering failed\n");
 		return -1;
@@ -238,6 +239,22 @@ uvc_video_fill_yuv_from_ring(struct uvc_device *dev, struct v4l2_buffer *buf)
 	
 	memcpy(dev->mem[buf->index],dev->yuvdata, dev->yuvsize);
 	buf->bytesused = dev->yuvsize;
+
+	return 0;
+}
+
+static int
+uvc_video_fill_jpg_from_ring(struct uvc_device *dev, struct v4l2_buffer *buf)
+{
+	if ( !dering(jpg_msgr, dev->mem[buf->index], &buf->bytesused) )
+	{
+		printf("dering failed\n");
+		return -1;
+	}
+	
+	//memcpy(dev->mem[buf->index],dev->yuvdata, dev->yuvsize);
+	//buf->bytesused = dev->yuvsize;
+	printf("jpg dev->yuvsize= %d\n", buf->bytesused);
 
 	return 0;
 }
@@ -285,6 +302,10 @@ uvc_video_fill_buffer(struct uvc_device *dev, struct v4l2_buffer *buf)
 		break;
 
 	case V4L2_PIX_FMT_MJPEG:
+		#if 0
+		memcpy(dev->mem[buf->index], dev->imgdata, dev->imgsize);
+				buf->bytesused = dev->imgsize;
+		#else
 		if (dev->jpg_directory == NULL)
 		{
 			memcpy(dev->mem[buf->index], dev->imgdata, dev->imgsize);
@@ -293,11 +314,13 @@ uvc_video_fill_buffer(struct uvc_device *dev, struct v4l2_buffer *buf)
 		else
 		{
 			if (uvc_video_fill_img(dev, buf) < 0)
+			//if (uvc_video_fill_jpg_from_ring(dev,buf) < 0)
 			{
 				memcpy(dev->mem[buf->index], dev->imgdata, dev->imgsize);
-				buf->bytesused = dev->imgsize;	
+				buf->bytesused = dev->imgsize;
 			}
 		}
+		#endif
 
 		break;
 	}
@@ -480,8 +503,8 @@ static const struct uvc_frame_info uvc_frames_yuyv[] = {
 };
 
 static const struct uvc_frame_info uvc_frames_mjpeg[] = {
-	{  640, 360, { 333333, 666666, 10000000, 50000000, 0 }, },
-	{ 1280, 720, { 50000000, 0 }, },
+	{  640, 480, { 333333, 666666, 10000000, 50000000, 0 }, },
+	{  320, 240, { 333333, 666666, 10000000, 50000000, 0 }, },
 	{ 0, 0, { 0, }, },
 };
 
@@ -752,7 +775,7 @@ uvc_events_process(struct uvc_device *dev)
 		return;
 
 	case UVC_EVENT_STREAMON:
-		uvc_video_reqbufs(dev, 8);
+		uvc_video_reqbufs(dev, 4);
 		uvc_video_stream(dev, 1);
 		return;
 
@@ -894,12 +917,12 @@ static void uvc_stream_load_yuvimg(struct uvc_device *dev, const char *img)
 
 int uvc_gadget_main(void *arg)
 {
-	char *device = "/dev/video0";
+	char *device = "/dev/video1";
 	struct uvc_device *dev;
 	int bulk_mode = 0;
-	char *mjpeg_image = NULL;
-	char *yuv_image   = "/home/pi/work/uvc-gadget/640x480.yuv";
-	char *jpg_directory = "/home/pi/work/video-test";
+	char *mjpeg_image 	= "/home/pi/work/video/aa0001.jpg";
+	char *yuv_image   	= "/home/pi/work/uvc-gadget/640x480.yuv";
+	char *jpg_directory = "/var/temp";
 	fd_set fds;
 	int ret;
 	int *thread_id = (int *)arg; 
@@ -948,4 +971,3 @@ int uvc_gadget_main(void *arg)
 	uvc_close(dev);
 	return 0;
 }
-

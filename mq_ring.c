@@ -35,7 +35,7 @@ bool dering(ring_t *r, uint8_t *data, uint32_t *size)
       return false;
    }
    pic = (mq_pic_t *)r->idx_buff[r->out & (r->size-1)];
-   memset(data,0,pic->len);
+   //memset(data,0,pic->len);
    memcpy(data, pic->data, pic->len);
    *size = pic->len;
    ++r->out; 
